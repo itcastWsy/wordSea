@@ -4,23 +4,30 @@ class WordCloudApp {
         this.generateBtn = document.getElementById('generateBtn');
         this.clearBtn = document.getElementById('clearBtn');
         this.downloadBtn = document.getElementById('downloadBtn');
+        this.themeToggleBtn = document.getElementById('themeToggleBtn');
         this.clearHistoryBtn = document.getElementById('clearHistoryBtn');
         this.shapeSelect = document.getElementById('shapeSelect');
         this.wordcloudCanvas = document.getElementById('wordcloudCanvas');
         this.wordcloudContainer = document.getElementById('wordcloudContainer');
         this.emptyState = document.getElementById('emptyState');
         this.historyList = document.getElementById('historyList');
+        this.toastContainer = document.getElementById('toast-container');
+        this.loadingOverlay = document.getElementById('loadingOverlay');
         
         this.currentWordCloudData = null;
         this.storageKey = 'wordcloud_history';
+        this.themeKey = 'wordcloud_theme';
+        this.isDark = false;
         
         this.init();
     }
 
     init() {
+        this.initTheme();
         this.generateBtn.addEventListener('click', () => this.generateWordCloud());
         this.clearBtn.addEventListener('click', () => this.clearText());
         this.downloadBtn.addEventListener('click', () => this.downloadImage());
+        this.themeToggleBtn.addEventListener('click', () => this.toggleTheme());
         this.clearHistoryBtn.addEventListener('click', () => this.clearHistory());
         this.shapeSelect.addEventListener('change', () => {
             if (this.currentWordCloudData) {
@@ -28,7 +35,102 @@ class WordCloudApp {
             }
         });
         
+        // Listen for wordcloud finished event
+        this.wordcloudCanvas.addEventListener('wordcloudstop', () => {
+            this.setLoading(false);
+        });
+
         this.loadHistory();
+    }
+
+    initTheme() {
+        const savedTheme = localStorage.getItem(this.themeKey);
+        const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        
+        if (savedTheme === 'dark' || (!savedTheme && systemPrefersDark)) {
+            this.isDark = true;
+            document.documentElement.setAttribute('data-theme', 'dark');
+        } else {
+            this.isDark = false;
+            document.documentElement.removeAttribute('data-theme');
+        }
+        
+        this.updateThemeIcon();
+    }
+
+    toggleTheme() {
+        this.isDark = !this.isDark;
+        
+        if (this.isDark) {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            localStorage.setItem(this.themeKey, 'dark');
+        } else {
+            document.documentElement.removeAttribute('data-theme');
+            localStorage.setItem(this.themeKey, 'light');
+        }
+        
+        this.updateThemeIcon();
+        
+        // Re-render word cloud if exists to update colors
+        if (this.currentWordCloudData) {
+            this.renderWordCloud(this.currentWordCloudData.wordList);
+        }
+    }
+
+    updateThemeIcon() {
+        const sunIcon = this.themeToggleBtn.querySelector('.sun-icon');
+        const moonIcon = this.themeToggleBtn.querySelector('.moon-icon');
+        
+        if (this.isDark) {
+            sunIcon.style.display = 'block';
+            moonIcon.style.display = 'none';
+        } else {
+            sunIcon.style.display = 'none';
+            moonIcon.style.display = 'block';
+        }
+    }
+
+    getThemeColors() {
+        if (this.isDark) {
+            // Dark theme colors: brighter, more vibrant against dark bg
+            return ['#38bdf8', '#0ea5e9', '#7dd3fc', '#fcd34d', '#fbbf24', '#94a3b8', '#cbd5e1'];
+        } else {
+            // Light theme colors: standard palette
+            return ['#0ea5e9', '#0284c7', '#0369a1', '#f59e0b', '#d97706', '#64748b', '#334155'];
+        }
+    }
+
+    showToast(message, type = 'success') {
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+        
+        const icon = type === 'success' 
+            ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>'
+            : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
+
+        toast.innerHTML = `
+            ${icon}
+            <span>${message}</span>
+        `;
+
+        this.toastContainer.appendChild(toast);
+
+        // Remove after 3 seconds
+        setTimeout(() => {
+            toast.style.opacity = '0';
+            toast.style.transform = 'translateX(100%)';
+            setTimeout(() => toast.remove(), 300);
+        }, 3000);
+    }
+
+    setLoading(isLoading) {
+        if (isLoading) {
+            this.loadingOverlay.classList.add('active');
+            this.generateBtn.disabled = true;
+        } else {
+            this.loadingOverlay.classList.remove('active');
+            this.generateBtn.disabled = false;
+        }
     }
 
     getShapeFunction(shapeName) {
@@ -127,36 +229,46 @@ class WordCloudApp {
         const text = this.textInput.value.trim();
         
         if (!text) {
-            alert('请输入文字内容！');
+            this.showToast('请输入文字内容！', 'error');
             return;
         }
 
-        const wordList = this.segmentText(text);
-        
-        if (wordList.length === 0) {
-            alert('未能提取到有效词汇，请输入更多内容！');
-            return;
-        }
+        this.setLoading(true);
 
-        this.currentWordCloudData = {
-            text: text,
-            wordList: wordList,
-            timestamp: Date.now()
-        };
+        // Use setTimeout to allow UI to update (show loader) before heavy processing
+        setTimeout(() => {
+            try {
+                const wordList = this.segmentText(text);
+                
+                if (wordList.length === 0) {
+                    this.setLoading(false);
+                    this.showToast('未能提取到有效词汇，请输入更多内容！', 'error');
+                    return;
+                }
 
-        this.renderWordCloud(wordList);
-        this.downloadBtn.disabled = false;
-        this.saveToHistory();
+                this.currentWordCloudData = {
+                    text: text,
+                    wordList: wordList,
+                    timestamp: Date.now()
+                };
+
+                this.renderWordCloud(wordList);
+                this.downloadBtn.disabled = false;
+                this.saveToHistory();
+                this.showToast('词云生成成功！');
+            } catch (error) {
+                console.error(error);
+                this.setLoading(false);
+                this.showToast('生成失败，请重试', 'error');
+            }
+        }, 100);
     }
 
     renderThumbnailWordCloud(itemId, wordList) {
         const canvas = document.querySelector(`.history-canvas[data-id="${itemId}"]`);
-        if (!canvas) {
-            console.log('Canvas not found for id:', itemId);
-            return;
-        }
+        if (!canvas) return;
 
-        const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#30cfd0'];
+        const colors = this.getThemeColors();
 
         const maxFreq = wordList[0][1];
         const minFreq = wordList[wordList.length - 1][1];
@@ -174,11 +286,11 @@ class WordCloudApp {
             list: list,
             gridSize: 3,
             weightFactor: 1,
-            fontFamily: 'Microsoft YaHei, Arial, sans-serif',
+            fontFamily: 'Inter, "Microsoft YaHei", sans-serif',
             color: () => colors[Math.floor(Math.random() * colors.length)],
             rotateRatio: 0.3,
             rotationSteps: 2,
-            backgroundColor: '#fafafa',
+            backgroundColor: 'transparent',
             drawOutOfBound: false,
             minSize: 6,
             shape: 'circle'
@@ -197,10 +309,11 @@ class WordCloudApp {
             return [word, normalizedSize];
         });
 
-        const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a', '#fee140', '#30cfd0'];
+        // Updated color palette to match new theme
+        const colors = this.getThemeColors();
 
         const containerRect = this.wordcloudContainer.getBoundingClientRect();
-        const scale = 4;
+        const scale = 2; // Reduced scale slightly for performance, 4 was overkill
         this.wordcloudCanvas.width = containerRect.width * scale;
         this.wordcloudCanvas.height = containerRect.height * scale;
         this.wordcloudCanvas.style.width = containerRect.width + 'px';
@@ -211,47 +324,68 @@ class WordCloudApp {
 
         WordCloud(this.wordcloudCanvas, {
             list: list,
-            gridSize: 2,
+            gridSize: 4,
             weightFactor: scale * 1.5,
-            fontFamily: 'Microsoft YaHei, Arial, sans-serif',
+            fontFamily: 'Inter, "Microsoft YaHei", sans-serif',
             color: () => colors[Math.floor(Math.random() * colors.length)],
             rotateRatio: 0.3,
             rotationSteps: 2,
-            backgroundColor: '#fafafa',
+            backgroundColor: 'transparent',
             drawOutOfBound: false,
             minSize: 8,
             shape: shapeFunction
         });
+        
+        // Fallback: if wordcloudstop doesn't fire (some versions), force stop loading
+        setTimeout(() => this.setLoading(false), 2000);
     }
 
     clearText() {
         this.textInput.value = '';
         this.textInput.focus();
+        this.showToast('文本已清空');
     }
 
     downloadImage() {
         try {
-            // 直接使用 WordCloud.js 生成的高分辨率 canvas
             const link = document.createElement('a');
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
             link.download = `wordcloud-${timestamp}.png`;
-            link.href = this.wordcloudCanvas.toDataURL('image/png', 1.0);
+            // Use html2canvas to capture the background as well if needed, 
+            // but toDataURL is faster for just the canvas content.
+            // Since we set bg to transparent in WordCloud config, we might want to composite it 
+            // with white background if the user expects a white bg image.
+            
+            // Create a temporary canvas to fill background
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = this.wordcloudCanvas.width;
+            tempCanvas.height = this.wordcloudCanvas.height;
+            const ctx = tempCanvas.getContext('2d');
+            
+            // Use dark background if in dark mode, otherwise white
+            ctx.fillStyle = this.isDark ? '#0f172a' : '#ffffff';
+            ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            ctx.drawImage(this.wordcloudCanvas, 0, 0);
+            
+            link.href = tempCanvas.toDataURL('image/png', 1.0);
             link.click();
+            this.showToast('图片下载已开始');
         } catch (error) {
             console.error('下载失败:', error);
-            alert('图片下载失败，请重试！');
+            this.showToast('图片下载失败，请重试', 'error');
         }
     }
 
     saveToHistory() {
         try {
-            // 创建缩略图 canvas
             const thumbnailCanvas = document.createElement('canvas');
             const thumbnailCtx = thumbnailCanvas.getContext('2d');
             thumbnailCanvas.width = 200;
             thumbnailCanvas.height = 130;
             
-            // 绘制缩放后的词云到缩略图
+            // Background for thumbnail
+            thumbnailCtx.fillStyle = this.isDark ? '#0f172a' : '#ffffff';
+            thumbnailCtx.fillRect(0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
             thumbnailCtx.drawImage(this.wordcloudCanvas, 0, 0, thumbnailCanvas.width, thumbnailCanvas.height);
             
             const thumbnail = thumbnailCanvas.toDataURL('image/jpeg', 0.5);
@@ -293,7 +427,10 @@ class WordCloudApp {
         const history = this.getHistory();
         
         if (history.length === 0) {
-            this.historyList.innerHTML = '<div class="empty-state"><p>暂无历史记录</p></div>';
+            this.historyList.innerHTML = `
+                <div class="empty-placeholder" style="padding: 40px 0;">
+                    <p>暂无历史记录</p>
+                </div>`;
             return;
         }
 
@@ -306,8 +443,14 @@ class WordCloudApp {
                     <div class="history-time">${this.formatTime(item.timestamp)}</div>
                     <div class="history-text">${item.text}</div>
                     <div class="history-actions">
-                        <button class="btn btn-primary btn-load">加载</button>
-                        <button class="btn btn-danger btn-delete">删除</button>
+                        <button class="btn btn-primary btn-load">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                            加载
+                        </button>
+                        <button class="btn btn-danger-ghost btn-delete">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            删除
+                        </button>
                     </div>
                 </div>
             </div>
@@ -350,7 +493,7 @@ class WordCloudApp {
 
             this.renderWordCloud(item.wordList);
             this.downloadBtn.disabled = false;
-            
+            this.showToast('历史记录已加载');
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
     }
@@ -365,6 +508,7 @@ class WordCloudApp {
         localStorage.setItem(this.storageKey, JSON.stringify(history));
         
         this.loadHistory();
+        this.showToast('记录已删除');
     }
 
     clearHistory() {
@@ -374,6 +518,7 @@ class WordCloudApp {
 
         localStorage.removeItem(this.storageKey);
         this.loadHistory();
+        this.showToast('历史记录已清空');
     }
 
     formatTime(timestamp) {
